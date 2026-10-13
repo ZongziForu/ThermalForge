@@ -11,9 +11,10 @@ import ThermalForgeCore
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
     @State private var manualUnit = 0
+    @State private var scrollContentFrame = CGRect.zero
 
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack {
@@ -218,8 +219,32 @@ struct MenuBarView: View {
             .padding(.top, 4)
             .padding(.bottom, 10)
         }
+        .background(GeometryReader { geometry in
+            Color.clear.preference(key: MenuScrollFrameKey.self,
+                value: geometry.frame(in: .named("menuScroll")))
+        })
         }
+        .coordinateSpace(name: "menuScroll")
+        .onPreferenceChange(MenuScrollFrameKey.self) { scrollContentFrame = $0 }
         .frame(width: 280, height: appState.isManualMode ? 500 : 560)
+        .overlay(alignment: .trailing) {
+            GeometryReader { geometry in
+                let viewport = geometry.size.height
+                let content = scrollContentFrame.height
+                if content > viewport {
+                    let track = max(0, viewport - 12)
+                    let thumb = min(track, max(24, track * viewport / content))
+                    let progress = min(1, max(0, -scrollContentFrame.minY / (content - viewport)))
+                    Capsule()
+                        .fill(Color.primary.opacity(0.18))
+                        .frame(width: 2, height: thumb)
+                        .offset(x: geometry.size.width - 4,
+                                y: 6 + progress * (track - thumb))
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
 
     // MARK: - Helpers
@@ -473,4 +498,9 @@ private struct TemperatureRow: View {
         if temp >= 60 { return .yellow }
         return .primary
     }
+}
+
+private struct MenuScrollFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
 }

@@ -103,3 +103,5 @@ custom installer selects Summer Smooth and enables the Touch Bar entry before
 relaunching the new app.
 
 The menu uses an explicit compact height (560 points for profiles, 500 for manual mode) to avoid collapsed popovers. Quit is a bordered action. Battery power help text changes with the power state and identifies battery assistance when connected but discharging; readings refresh every five seconds.
+
+The menu hides the native scroller and draws a 2-point, 18%-opacity position indicator without intercepting scrolling. The Touch Bar tray entry uses compact borderless content to fit the system-controlled width. On this Mac, the global expanded Control Strip mode hid the third-party entry; App Controls with Control Strip shows it. This global preference is user-controlled and is never changed by the installer.

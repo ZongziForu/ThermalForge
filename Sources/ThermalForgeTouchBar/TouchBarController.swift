@@ -154,8 +154,15 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
         entryButton.target = self
         entryButton.action = #selector(openPanel)
         entryButton.bezelStyle = .rounded
+        entryButton.isBordered = false
         entryButton.setButtonType(.momentaryPushIn)
-        entryButton.frame = NSRect(x: 0, y: 0, width: 64, height: 30)
+        entryButton.frame = NSRect(x: 0, y: 0, width: 90, height: 30)
+        entryButton.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        entryButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            entryButton.widthAnchor.constraint(equalToConstant: 90),
+            entryButton.heightAnchor.constraint(equalToConstant: 30)
+        ])
         entryButton.imagePosition = .imageLeading
         entryButton.setAccessibilityLabel("ThermalForge: open temperature and fan controls")
     }
@@ -173,6 +180,7 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
         item.view = entryButton
         guard backend.add(item) else { return false }
         entry = item; enabled = true
+        logger.notice("Touch Bar entry registered: \(self.entryID.rawValue, privacy: .public)")
         update(reading)
         return true
     }
@@ -184,7 +192,8 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
         let title = value.temperatureText(value.cpuTemperature)
         if title != lastEntryTitle { entryButton.title = title; lastEntryTitle = title }
         entryButton.image = NSImage(systemSymbolName: value.safetyOverride ? "exclamationmark.triangle.fill" : "fan.fill",
-                                    accessibilityDescription: "ThermalForge")
+                                    accessibilityDescription: "ThermalForge")?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
         entryButton.contentTintColor = value.safetyOverride ? .systemRed : value.manual ? .systemOrange : .labelColor
         guard expanded else { return }
         updatePanel()
