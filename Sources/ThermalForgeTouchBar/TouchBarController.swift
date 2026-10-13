@@ -151,19 +151,20 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
         sliderID = .init(namespace + ".touchbar.slider")
         closeID = .init(namespace + ".touchbar.close")
         super.init()
+        entryButton.cell = CompactTouchBarEntryCell(textCell: "—")
         entryButton.target = self
         entryButton.action = #selector(openPanel)
         entryButton.bezelStyle = .rounded
-        entryButton.isBordered = false
+        entryButton.isBordered = true
         entryButton.setButtonType(.momentaryPushIn)
-        entryButton.frame = NSRect(x: 0, y: 0, width: 90, height: 30)
-        entryButton.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        entryButton.frame = NSRect(x: 0, y: 0, width: 55, height: 30)
+        entryButton.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         entryButton.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            entryButton.widthAnchor.constraint(equalToConstant: 90),
+            entryButton.widthAnchor.constraint(equalToConstant: 55),
             entryButton.heightAnchor.constraint(equalToConstant: 30)
         ])
-        entryButton.imagePosition = .imageLeading
+        entryButton.imagePosition = .imageLeft
         entryButton.setAccessibilityLabel("ThermalForge: open temperature and fan controls")
     }
 
@@ -191,10 +192,13 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
         guard enabled else { return }
         let title = value.temperatureText(value.cpuTemperature)
         if title != lastEntryTitle { entryButton.title = title; lastEntryTitle = title }
+        let tint: NSColor = value.safetyOverride ? .systemRed : value.manual ? .systemOrange : .white
         entryButton.image = NSImage(systemSymbolName: value.safetyOverride ? "exclamationmark.triangle.fill" : "fan.fill",
                                     accessibilityDescription: "ThermalForge")?
-            .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
-        entryButton.contentTintColor = value.safetyOverride ? .systemRed : value.manual ? .systemOrange : .labelColor
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+                .applying(.init(paletteColors: [tint])))
+        entryButton.image?.isTemplate = false
+        entryButton.contentTintColor = tint
         guard expanded else { return }
         updatePanel()
     }
@@ -270,5 +274,27 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
             return item
         }
         return nil
+    }
+}
+
+/// Keep AppKit's native bezel and button behavior, but fit the icon and reading
+/// together within the Control Strip's fixed slot instead of truncating the title.
+@MainActor private final class CompactTouchBarEntryCell: NSButtonCell {
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        let color = (controlView as? NSButton)?.contentTintColor ?? .white
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: color
+        ]
+        let text = title as NSString
+        let size = text.size(withAttributes: attributes)
+        let iconWidth: CGFloat = 14
+        let gap: CGFloat = 3
+        let start = cellFrame.midX - (iconWidth + gap + size.width) / 2
+        image?.draw(in: NSRect(x: start, y: cellFrame.midY - 7, width: 14, height: 14),
+                    from: .zero, operation: .sourceOver, fraction: isHighlighted ? 0.75 : 1,
+                    respectFlipped: true, hints: nil)
+        text.draw(at: NSPoint(x: start + iconWidth + gap,
+                             y: cellFrame.midY - size.height / 2), withAttributes: attributes)
     }
 }
