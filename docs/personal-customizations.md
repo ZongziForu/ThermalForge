@@ -101,3 +101,5 @@ The old flat executable named `/Applications/ThermalForge.app` is atomically
 replaced with a real bundle. User profiles/calibration remain in place. The
 custom installer selects Summer Smooth and enables the Touch Bar entry before
 relaunching the new app.
+
+The menu uses an explicit compact height (560 points for profiles, 500 for manual mode) to avoid collapsed popovers. Quit is a bordered action. Battery power help text changes with the power state and identifies battery assistance when connected but discharging; readings refresh every five seconds.

@@ -14,6 +14,7 @@ struct BatteryPowerTests {
         #expect(snapshot.state == .charging)
         #expect(snapshot.watts == 24)
         #expect(snapshot.adapterRatingWatts == 100)
+        #expect(snapshot.explanation == "Power flowing into the battery")
     }
 
     @Test("Discharge decodes signed and unsigned 32/64-bit currents")
@@ -25,6 +26,7 @@ struct BatteryPowerTests {
             ])
             #expect(snapshot.state == .battery)
             #expect(snapshot.watts == -12)
+            #expect(snapshot.explanation == "Power supplied by the battery")
         }
     }
 
@@ -33,6 +35,7 @@ struct BatteryPowerTests {
         let snapshot = BatteryPowerStatus.decode(["ExternalConnected": true])
         #expect(snapshot.state == .pluggedIn)
         #expect(snapshot.watts == nil)
+        #expect(snapshot.explanation == "Connected · net battery power")
         #expect(BatteryPowerStatus.decode(["ExternalConnected": true, "FullyCharged": true]).state == .full)
     }
 }

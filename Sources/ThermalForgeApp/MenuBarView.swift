@@ -102,7 +102,7 @@ struct MenuBarView: View {
                     } else { Text("Unavailable").foregroundStyle(.secondary) }
                 }
                 .padding(.horizontal, 12)
-                Text("Net battery power, excluding the Mac's own consumption")
+                Text(power.explanation)
                     .font(.caption2).foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
                 if let rating = power.adapterRatingWatts {
@@ -210,16 +210,16 @@ struct MenuBarView: View {
                 .padding(.horizontal, 12)
 
             Button(action: { NSApp.terminate(nil) }) {
-                Text("Quit ThermalForge")
+                Label("Quit ThermalForge", systemImage: "power")
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .buttonStyle(.bordered)
             .padding(.horizontal, 12)
             .padding(.top, 4)
             .padding(.bottom, 10)
         }
         }
-        .frame(width: 280, height: 640)
+        .frame(width: 280, height: appState.isManualMode ? 500 : 560)
     }
 
     // MARK: - Helpers

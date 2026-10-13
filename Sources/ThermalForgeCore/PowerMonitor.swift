@@ -13,6 +13,16 @@ public struct BatteryPowerStatus: Equatable, Sendable {
     public let watts: Double?
     public let adapterRatingWatts: Int?
 
+    public var explanation: String {
+        switch state {
+        case .battery: return "Power supplied by the battery"
+        case .charging: return "Power flowing into the battery"
+        case .full: return "Battery full · net battery power"
+        case .pluggedIn:
+            return (watts ?? 0) < -0.5 ? "Battery assisting the adapter" : "Connected · net battery power"
+        }
+    }
+
     public static func read() -> BatteryPowerStatus? {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
         guard service != 0 else { return nil }
