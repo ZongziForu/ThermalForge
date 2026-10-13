@@ -291,17 +291,17 @@ final class AppState: ObservableObject {
 
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if didReadVersion { self.daemonVersionMismatch = versionValue }
-                if didReadState { self.externalHold = holdValue }
+                if didReadVersion && self.daemonVersionMismatch != versionValue { self.daemonVersionMismatch = versionValue }
+                if didReadState && self.externalHold != holdValue { self.externalHold = holdValue }
                 // Daemon reachability — debounced so a single blip doesn't flash the
                 // "fan control unavailable" banner. Two consecutive missed heartbeats
                 // (~10s) is a real outage; any success clears it immediately.
                 if hbOK {
                     self.heartbeatFailures = 0
-                    self.daemonUnreachable = false
+                    if self.daemonUnreachable { self.daemonUnreachable = false }
                 } else {
                     self.heartbeatFailures += 1
-                    if self.heartbeatFailures >= 2 { self.daemonUnreachable = true }
+                    if self.heartbeatFailures >= 2 && !self.daemonUnreachable { self.daemonUnreachable = true }
                 }
             }
 

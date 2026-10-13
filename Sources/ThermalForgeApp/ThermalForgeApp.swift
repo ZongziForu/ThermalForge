@@ -60,7 +60,7 @@ struct ThermalForgeApp: App {
                 maxTemp: appState.maxTemp,
                 fahrenheit: appState.useFahrenheit,
                 needsDaemonUpdate: appState.daemonVersionMismatch != nil
-            )
+            ).equatable()
         }
         .menuBarExtraStyle(.window)
     }
@@ -68,7 +68,17 @@ struct ThermalForgeApp: App {
 
 // MARK: - Menu Bar Label
 
-struct MenuBarLabel: View {
+struct MenuBarLabel: View, Equatable {
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.iconName == rhs.iconName && lhs.displayedTemperature == rhs.displayedTemperature
+            && lhs.needsDaemonUpdate == rhs.needsDaemonUpdate
+    }
+
+    private var displayedTemperature: Int? {
+        guard let value = maxTemp, value.isFinite else { return nil }
+        return Int(fahrenheit ? value * 9 / 5 + 32 : value)
+    }
+
     let state: MonitorState
     let maxTemp: Float?
     var fahrenheit: Bool = false
@@ -87,9 +97,8 @@ struct MenuBarLabel: View {
                             .offset(x: 3, y: -2)
                     }
                 }
-            if let tempC = maxTemp {
-                let display = fahrenheit ? tempC * 9 / 5 + 32 : tempC
-                Text("\(Int(display))°")
+            if let temperature = displayedTemperature {
+                Text("\(temperature)°")
                     .font(.system(.caption, design: .monospaced))
             }
         }

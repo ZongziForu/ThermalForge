@@ -137,3 +137,26 @@ existing 1-second thermal safety floor, heartbeat and write/unlock behavior rema
 in force. The source includes cache invalidation on daemon wake for a future full
 installation. Repeated all-fan unlock waits are a separate daemon latency issue,
 not required to achieve the measured GUI CPU reduction, and remain unchanged.
+
+## 0.2.3.2: manual writes and display deduplication
+
+All-fan writes check every fan's actual manual mode and, where supported, Ftst.
+Already-ready hardware receives only new targets; a missing/failed check takes
+the original unlock path. Unlock and target failures remain explicit errors.
+Heartbeat properties publish only changes, the menu label compares its displayed
+integer temperature/icon, and unchanged Touch Bar slider properties are skipped.
+
+Important correction from hardware validation: this MacBookPro17,1 does not
+expose Ftst in its enumerated SMC keys. Its old installed daemon's four set
+commands took about 4–7ms, including the first, with no fixed half-second wait.
+The half-second code path applies only where Ftst is actually present, not every
+M1 machine. Skipping redundant mode writes is still useful, but a dramatic
+latency improvement is not expected on this Mac. Other hardware is covered by
+injected operation-sequence tests, not by a claim of physical validation.
+
+Before this revision, six effective 5-second samples per display state measured
+GUI means: menu closed/Touch Bar collapsed 2.63%; menu open/bar collapsed 6.72%;
+menu closed/bar expanded 5.17%. Warm-up/transient ranges were substantial; these
+are observations rather than a controlled benchmark. Both-open was omitted as
+irrelevant to the user's usual workflow. After-install CPU and latency validation
+is still pending. Version 0.2.3.2 requires the full installer to update the daemon.

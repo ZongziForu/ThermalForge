@@ -295,15 +295,21 @@ public final class FanControl {
             )
         }
 
-        try unlockFans(count: count)
-
-        for i in 0..<count {
-            let targetKey = SMCFanKey.key(SMCFanKey.target, fan: i)
-            guard smc.writeKey(targetKey, bytes: floatToSMCBytes(rpm)) else {
-                throw ThermalForgeError.writeFailed(targetKey)
-            }
-            log("Set fan \(i) to \(Int(rpm)) RPM")
-        }
+        guard count > 0 else { throw ThermalForgeError.readFailed(SMCFanKey.count) }
+        try ManualFanUpdate.apply(indices: Array(0..<count), requiresForceTest: hasFtst,
+            readMode: { index in
+                let result = self.smc.readKey(SMCFanKey.key(self.modeKeyTemplate, fan: index))
+                return result.success ? result.bytes.first : nil
+            }, readForceTest: {
+                let result = self.smc.readKey(SMCFanKey.forceTest)
+                return result.success ? result.bytes.first : nil
+            }, unlock: { try self.unlockFans(count: count) }, write: { index in
+                let key = SMCFanKey.key(SMCFanKey.target, fan: index)
+                guard self.smc.writeKey(key, bytes: floatToSMCBytes(rpm)) else {
+                    throw ThermalForgeError.writeFailed(key)
+                }
+                self.log("Set fan \(index) to \(Int(rpm)) RPM")
+            })
     }
 
     // MARK: - Manual-Control Check
@@ -493,5 +499,18 @@ public final class FanControl {
     static func deliver(_ message: String, to sink: ((String) -> Void)?,
                         fallback: (String) -> Void) {
         if let sink { sink(message) } else { fallback(message) }
+    }
+}
+
+/// Hardware is rechecked for every command, never inferred from a cached boolean.
+/// A failed read takes the original full unlock path; failed writes propagate.
+enum ManualFanUpdate {
+    static func apply(indices: [Int], requiresForceTest: Bool,
+                      readMode: (Int) -> UInt8?, readForceTest: () -> UInt8?,
+                      unlock: () throws -> Void, write: (Int) throws -> Void) throws {
+        let ready = !indices.isEmpty && indices.allSatisfy { readMode($0) == 1 }
+            && (!requiresForceTest || readForceTest() == 1)
+        if !ready { try unlock() }
+        for index in indices { try write(index) }
     }
 }

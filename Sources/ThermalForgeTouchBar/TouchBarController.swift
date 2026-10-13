@@ -221,8 +221,10 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
             slider?.slider.doubleValue = min(max(reading.targetRPM, reading.minRPM), reading.maxRPM)
             if slider != nil { sliderNeedsSync = false }
         }
-        slider?.slider.isEnabled = reading.controlAvailable && reading.manual && !reading.safetyOverride
-        slider?.label = reading.safetyOverride ? "Overheat protection" : "\(Int(reading.targetRPM)) RPM"
+        let sliderEnabled = reading.controlAvailable && reading.manual && !reading.safetyOverride
+        if slider?.slider.isEnabled != sliderEnabled { slider?.slider.isEnabled = sliderEnabled }
+        let label = reading.safetyOverride ? "Overheat protection" : "\(Int(reading.targetRPM)) RPM"
+        if slider?.label != label { slider?.label = label }
     }
 
     @objc public func openPanel() {
