@@ -45,8 +45,9 @@ if [ "$EXPECTED_VERSION" != "$ACTUAL_VERSION" ]; then
     echo "CLI version mismatch; the old user app has not been removed."
     exit 1
 fi
-# The status client speaks the new protocol. A successful response verifies that
-# launchd is serving the new daemon, rather than a surviving old process.
+# `status` reads SMC directly, so it alone cannot verify the socket server.
+# Query the actual daemon before retiring the old user app.
+/usr/bin/python3 Tools/verify-installed-daemon.py "$EXPECTED_VERSION"
 /usr/local/bin/thermalforge status > "$BACKUP_DIR/post-install-status.txt"
 
 if [ -e "$LEGACY_USER_APP" ] && [ -s "$BACKUP_DIR/legacy-user-app.zip" ]; then
