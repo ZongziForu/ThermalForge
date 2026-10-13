@@ -8,6 +8,11 @@
 import SwiftUI
 import ThermalForgeCore
 
+@MainActor enum AppLaunchState {
+    static var ready = false
+    static let readyNotification = Notification.Name("ThermalForgeAppReady")
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // No Dock icon — menu bar only
@@ -19,7 +24,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if running.count > 1 {
             TFLogger.shared.error("Another instance already running — quitting")
             NSApp.terminate(nil)
+            return
         }
+        AppLaunchState.ready = true
+        NotificationCenter.default.post(name: AppLaunchState.readyNotification, object: nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

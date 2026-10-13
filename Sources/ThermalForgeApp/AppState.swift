@@ -21,6 +21,8 @@ final class AppState: ObservableObject {
     @Published var touchBarUnavailable = false
     private var lastTouchBarUpdate = Date.distantPast
     private var terminationObserver: NSObjectProtocol?
+    private var launchObserver: NSObjectProtocol?
+    private var touchBarReady = false
     private lazy var touchBarController = TouchBarController { [weak self] action in
         guard let self else { return }
         switch action {
@@ -127,7 +129,19 @@ final class AppState: ObservableObject {
 
         startMonitoring()
         startPowerMonitoring()
-        configureTouchBar()
+        if AppLaunchState.ready {
+            touchBarReady = true
+            configureTouchBar()
+        } else {
+            launchObserver = NotificationCenter.default.addObserver(
+                forName: AppLaunchState.readyNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.touchBarReady = true
+                    self?.configureTouchBar()
+                }
+            }
+        }
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -456,13 +470,14 @@ final class AppState: ObservableObject {
     }
 
     private func configureTouchBar() {
+        guard touchBarReady else { return }
         touchBarUnavailable = touchBarEnabled && !touchBarController.available
         touchBarController.setEnabled(touchBarEnabled)
         updateTouchBar(force: true)
     }
 
     private func updateTouchBar(force: Bool = false) {
-        guard touchBarEnabled else { return }
+        guard touchBarEnabled, touchBarReady else { return }
         let now = Date()
         guard force || now.timeIntervalSince(lastTouchBarUpdate) >= 1 else { return }
         lastTouchBarUpdate = now

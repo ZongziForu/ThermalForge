@@ -219,8 +219,7 @@ struct MenuBarView: View {
             .padding(.bottom, 10)
         }
         }
-        .frame(width: 280)
-        .frame(maxHeight: 680)
+        .frame(width: 280, height: 640)
     }
 
     // MARK: - Helpers

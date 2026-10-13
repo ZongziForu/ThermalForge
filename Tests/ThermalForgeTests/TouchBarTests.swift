@@ -100,4 +100,17 @@ struct TouchBarTests {
         controller.setEnabled(false)
         #expect(backend.removals == 1)
     }
+
+    @Test("Preview and installed app do not compete for the same global identifier") @MainActor
+    func namespaces() {
+        let productionBackend = FakeTouchBarBackend()
+        let previewBackend = FakeTouchBarBackend()
+        let production = TouchBarController(namespace: "com.thermalforge.app", backend: productionBackend) { _ in }
+        let preview = TouchBarController(namespace: "com.thermalforge.preview", backend: previewBackend) { _ in }
+        production.setEnabled(true)
+        preview.setEnabled(true)
+        #expect(productionBackend.item?.identifier != previewBackend.item?.identifier)
+        preview.setEnabled(false)
+        #expect(production.enabled)
+    }
 }

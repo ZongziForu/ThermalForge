@@ -117,11 +117,11 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
 @MainActor public final class TouchBarController: NSObject, NSTouchBarDelegate {
     private let backend: TouchBarBackend
     private let action: (TouchBarAction) -> Void
-    private let entryID = NSTouchBarItem.Identifier("com.thermalforge.touchbar.entry")
-    private let metricsID = NSTouchBarItem.Identifier("com.thermalforge.touchbar.metrics")
-    private let modesID = NSTouchBarItem.Identifier("com.thermalforge.touchbar.modes")
-    private let sliderID = NSTouchBarItem.Identifier("com.thermalforge.touchbar.slider")
-    private let closeID = NSTouchBarItem.Identifier("com.thermalforge.touchbar.close")
+    private let entryID: NSTouchBarItem.Identifier
+    private let metricsID: NSTouchBarItem.Identifier
+    private let modesID: NSTouchBarItem.Identifier
+    private let sliderID: NSTouchBarItem.Identifier
+    private let closeID: NSTouchBarItem.Identifier
     private var entry: NSCustomTouchBarItem?
     private let entryButton = NSButton(title: "—", target: nil, action: nil)
     private let logger = Logger(subsystem: "com.thermalforge.touchbar", category: "lifecycle")
@@ -141,9 +141,15 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
     public var available: Bool { backend.available }
     public private(set) var enabled = false
 
-    public init(backend: TouchBarBackend? = nil, action: @escaping (TouchBarAction) -> Void) {
+    public init(namespace: String = Bundle.main.bundleIdentifier ?? "com.thermalforge",
+                backend: TouchBarBackend? = nil, action: @escaping (TouchBarAction) -> Void) {
         self.backend = backend ?? SystemTouchBarBackend()
         self.action = action
+        entryID = .init(namespace + ".touchbar.entry")
+        metricsID = .init(namespace + ".touchbar.metrics")
+        modesID = .init(namespace + ".touchbar.modes")
+        sliderID = .init(namespace + ".touchbar.slider")
+        closeID = .init(namespace + ".touchbar.close")
         super.init()
         entryButton.target = self
         entryButton.action = #selector(openPanel)
