@@ -160,3 +160,15 @@ menu closed/bar expanded 5.17%. Warm-up/transient ranges were substantial; these
 are observations rather than a controlled benchmark. Both-open was omitted as
 irrelevant to the user's usual workflow. After-install CPU and latency validation
 is still pending. Version 0.2.3.2 requires the full installer to update the daemon.
+
+Installed 0.2.3.2 verification: GUI/CLI/live daemon versions match and the app
+signature verifies. With the menu closed and Touch Bar collapsed, six effective
+5-second intervals measured GUI CPU mean 1.97% (1.8–2.1%), footprint about 19MB,
+and daemon mean 0.13%. This is a short observational comparison against the
+previous 2.63% case; memory includes cold/warm view-loading differences.
+Four live minimum-RPM set commands took 2.81, 2.57, 2.19 and 1.90ms. The test
+confirmed Apple auto afterward, then the GUI was restarted in Summer Smooth.
+The stopped app's supervised hold was released by the daemon watchdog before
+the benchmark, so no CLI/user hold was overwritten. Latency gains include the
+new daemon's SMC caches as well as avoiding redundant mode writes; they are not
+an isolated benchmark of unlock logic alone.
