@@ -5,6 +5,26 @@ profile selection/restore, and native battery-power readings. Smart calibration
 is unchanged and is not required for any of these features. No stress test runs
 automatically.
 
+## Touch Bar
+
+An optional Control Strip entry displays a fan icon and live CPU temperature.
+Tapping it opens CPU/GPU temperatures, actual RPM, net battery watts, Summer /
+Manual / Default actions, and a manual RPM slider. Close minimizes the linked
+panel back to its persistent entry. The menu toggle removes the entry entirely.
+Data is reused from the existing monitor and battery reader; entry updates are
+limited to once per second and the closed panel does not refresh its views.
+
+The global entry uses dynamically resolved private AppKit/DFRFoundation APIs.
+There are no extra apps, services, permissions or paid developer accounts. If
+those APIs disappear, only this optional UI is disabled. The controls dispatch
+through the same AppState and safety paths as the menu bar. The slider does not
+write until release and is disabled during a safety override or CLI-owned hold.
+
+The `TouchBarPreview` developer executable simulates readings and actions without
+creating a ThermalMonitor, connecting to the daemon, or writing SMC. It is not
+installed with the production app. Physical Touch Bar visibility and private-API
+behavior still require a device check; unit tests alone do not establish them.
+
 ## Summer Smooth
 
 This is a comfort preset, not an Apple-published fan curve or a measured optimum.
@@ -71,3 +91,13 @@ daemon together requires the local administrator password via `./setup.sh`.
 Do not launch the new app against an old daemon: the wire protocol has changed.
 An upstream Homebrew upgrade can replace this fork's features; build from the fork
 when updating this customized installation.
+
+For this machine's upgrade, run `./install-custom.sh` as the normal user. It
+builds first, asks sudo for the administrator password, archives the old GUI,
+CLI, daemon plist and user data under the ignored `.local-install/backups/`,
+then installs GUI and daemon together. Only after the new protocol answers and
+the signature verifies does it remove the duplicate old GUI in `~/Applications`.
+The old flat executable named `/Applications/ThermalForge.app` is atomically
+replaced with a real bundle. User profiles/calibration remain in place. The
+custom installer selects Summer Smooth and enables the Touch Bar entry before
+relaunching the new app.

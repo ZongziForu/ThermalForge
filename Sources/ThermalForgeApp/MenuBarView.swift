@@ -198,6 +198,12 @@ struct MenuBarView: View {
             Divider().padding(.vertical, 4)
 
             // Footer
+            Toggle("Show in Touch Bar", isOn: $appState.touchBarEnabled)
+                .padding(.horizontal, 12)
+            if appState.touchBarUnavailable {
+                Text("Touch Bar is unavailable on this system.")
+                    .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 12)
+            }
             Toggle("°F / °C", isOn: $appState.useFahrenheit)
                 .padding(.horizontal, 12)
             Toggle("Launch at Login", isOn: $appState.launchAtLogin)

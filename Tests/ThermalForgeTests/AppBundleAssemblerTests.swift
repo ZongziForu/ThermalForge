@@ -16,6 +16,20 @@ import Testing
 @Suite("App bundle assembler (#31)")
 struct AppBundleAssemblerTests {
 
+    @Test("A legacy flat .app file is atomically replaced by a real app directory")
+    func replaceLegacyFlatApp() throws {
+        let directory = try scratchDir()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("ThermalForge.app")
+        let staged = directory.appendingPathComponent("ThermalForge.app.staged")
+        try Data("legacy binary".utf8).write(to: destination)
+        try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
+        try Data("new app".utf8).write(to: staged.appendingPathComponent("Info.plist"))
+        #expect(try AtomicReplace.replace(destination.path, with: staged.path) == nil)
+        #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("Info.plist").path))
+        #expect(!FileManager.default.fileExists(atPath: staged.path))
+    }
+
     private func scratchDir() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("tf-assembler-\(UUID().uuidString)")

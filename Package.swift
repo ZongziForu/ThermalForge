@@ -26,12 +26,15 @@ let package = Package(
         ),
         .executableTarget(
             name: "ThermalForgeApp",
-            dependencies: ["ThermalForgeCore"],
+            dependencies: ["ThermalForgeCore", "ThermalForgeTouchBar"],
             path: "Sources/ThermalForgeApp"
         ),
+        .target(name: "ThermalForgeTouchBar", dependencies: ["ThermalForgeCore"]),
+        .executableTarget(name: "TouchBarPreview", dependencies: ["ThermalForgeTouchBar"],
+                          path: "Tools/TouchBarPreview"),
         .testTarget(
             name: "ThermalForgeTests",
-            dependencies: ["ThermalForgeCore"],
+            dependencies: ["ThermalForgeCore", "ThermalForgeTouchBar"],
             path: "Tests/ThermalForgeTests"
         ),
     ]

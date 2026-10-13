@@ -7,10 +7,32 @@
 
 import ServiceManagement
 import SwiftUI
+import ThermalForgeTouchBar
 @preconcurrency import ThermalForgeCore
 
 @MainActor
 final class AppState: ObservableObject {
+    @Published var touchBarEnabled = UserDefaults.standard.object(forKey: "touchBarEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(touchBarEnabled, forKey: "touchBarEnabled")
+            configureTouchBar()
+        }
+    }
+    @Published var touchBarUnavailable = false
+    private var lastTouchBarUpdate = Date.distantPast
+    private var terminationObserver: NSObjectProtocol?
+    private lazy var touchBarController = TouchBarController { [weak self] action in
+        guard let self else { return }
+        switch action {
+        case .summer: self.selectProfile(.summerSmooth)
+        case .manual: if !self.isManualMode { self.enableManualMode() }
+        case .automatic: self.resetAuto()
+        case .speed(let rpm):
+            guard self.isManualMode else { return }
+            self.manualRPM = rpm
+            self.applyManualRPM()
+        }
+    }
     @Published var latestStatus: ThermalStatus?
     let availableProfiles = FanProfile.loadAll()
     @Published var batteryPower: BatteryPowerStatus?
@@ -105,6 +127,12 @@ final class AppState: ObservableObject {
 
         startMonitoring()
         startPowerMonitoring()
+        configureTouchBar()
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { _ = self?.touchBarController.setEnabled(false) }
+        }
         // startHeartbeat() is intentionally NOT called here — it is launched from
         // adoptDaemonStateOnLaunch()'s @MainActor completion (the ordering gate),
         // so the first heartbeat poll can never land before adopt has applied the
@@ -361,6 +389,7 @@ final class AppState: ObservableObject {
                 self?.maxTemp = status.temperatures
                     .filter { key, _ in displayPrefixes.contains(where: { key.hasPrefix($0) }) }
                     .values.max()
+                self?.updateTouchBar()
             }
         }
         monitor.onFanCommand = { [weak self] command in
@@ -387,7 +416,10 @@ final class AppState: ObservableObject {
         timer.schedule(deadline: .now(), repeating: 5, leeway: .milliseconds(500))
         timer.setEventHandler { [weak self] in
             let status = BatteryPowerStatus.read()
-            Task { @MainActor [weak self] in self?.batteryPower = status }
+            Task { @MainActor [weak self] in
+                self?.batteryPower = status
+                self?.updateTouchBar()
+            }
         }
         timer.resume()
         powerTimer = timer
@@ -421,6 +453,31 @@ final class AppState: ObservableObject {
 
     func leaveManualMode() {
         selectProfile(profileBeforeManual)
+    }
+
+    private func configureTouchBar() {
+        touchBarUnavailable = touchBarEnabled && !touchBarController.available
+        touchBarController.setEnabled(touchBarEnabled)
+        updateTouchBar(force: true)
+    }
+
+    private func updateTouchBar(force: Bool = false) {
+        guard touchBarEnabled else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(lastTouchBarUpdate) >= 1 else { return }
+        lastTouchBarUpdate = now
+        let temps = latestStatus?.temperatures ?? [:]
+        func peak(_ prefixes: [String]) -> Float? {
+            temps.filter { key, _ in prefixes.contains { key.hasPrefix($0) } }.values.max()
+        }
+        touchBarController.update(TouchBarReading(
+            cpuTemperature: peak(["TC", "Tp"]), gpuTemperature: peak(["TG", "Tg"]),
+            actualRPM: latestStatus?.fans.first?.actualRPM, batteryWatts: batteryPower?.watts,
+            charging: batteryPower?.state == .charging, manual: isManualMode,
+            targetRPM: manualRPM, minRPM: manualRange.lowerBound, maxRPM: manualRange.upperBound,
+            safetyOverride: monitorState == .safetyOverride,
+            controlAvailable: !daemonUnreachable && externalHold == nil && latestStatus?.fans.isEmpty == false,
+            fahrenheit: useFahrenheit))
     }
 
     // MARK: - Actions
