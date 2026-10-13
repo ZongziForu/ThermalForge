@@ -10,8 +10,10 @@ import ThermalForgeCore
 
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
+    @State private var manualUnit = 0
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack {
@@ -89,47 +91,77 @@ struct MenuBarView: View {
 
             Divider().padding(.vertical, 4)
 
-            // Profile picker
-            SectionHeader(title: "PROFILE")
-            Picker("Profile", selection: Binding(
-                get: { appState.activeProfile.id },
-                set: { id in
-                    if let profile = FanProfile.builtIn.first(where: { $0.id == id }) {
-                        appState.selectProfile(profile)
-                    }
+            SectionHeader(title: "POWER")
+            if let power = appState.batteryPower {
+                HStack {
+                    Text(power.state.rawValue).foregroundStyle(.secondary)
+                    Spacer()
+                    if let watts = power.watts {
+                        Text("\(Int(abs(watts).rounded())) W")
+                            .font(.system(.body, design: .monospaced))
+                    } else { Text("Unavailable").foregroundStyle(.secondary) }
                 }
-            )) {
-                ForEach(FanProfile.builtIn) { profile in
-                    HStack {
-                        Text(profile.name)
-                        Spacer()
-                        if !profile.curve.handsOff {
-                            let unit = appState.useFahrenheit ? "F" : "C"
-                            if profile.curve.instantEngage {
-                                // Max: show instant trigger temp
-                                let startC = profile.curve.startTemp
-                                let startDisp = appState.useFahrenheit ? startC * 9 / 5 + 32 : startC
-                                Text("\(Int(startDisp))°\(unit) instant")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                let startC = profile.curve.startTemp
-                                let ceilC = profile.curve.ceilingTemp
-                                let startDisp = appState.useFahrenheit ? startC * 9 / 5 + 32 : startC
-                                let ceilDisp = appState.useFahrenheit ? ceilC * 9 / 5 + 32 : ceilC
-                                Text("\(Int(startDisp))→\(Int(ceilDisp))°\(unit)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                Text("Net battery power, excluding the Mac's own consumption")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                if let rating = power.adapterRatingWatts {
+                    Text("Adapter rating: \(rating) W")
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                }
+            } else {
+                Text("Battery data unavailable").font(.caption).foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+            }
+            Divider().padding(.vertical, 4)
+
+            SectionHeader(title: "CONTROL")
+            Toggle("Manual fan speed", isOn: Binding(
+                get: { appState.isManualMode },
+                set: { $0 ? appState.enableManualMode() : appState.leaveManualMode() }
+            ))
+            .disabled(appState.latestStatus?.fans.isEmpty != false || appState.daemonUnreachable)
+            .padding(.horizontal, 12)
+            if appState.isManualMode {
+                Picker("Units", selection: $manualUnit) {
+                    Text("RPM").tag(0)
+                    Text("Percent").tag(1)
+                }.pickerStyle(.segmented).padding(.horizontal, 12)
+                HStack {
+                    Text("Target").foregroundStyle(.secondary)
+                    Spacer()
+                    if manualUnit == 0 {
+                        Text("\(Int(appState.manualRPM)) RPM")
+                    } else {
+                        Text("\(Int(appState.manualRPM / appState.manualRange.upperBound * 100))%")
+                    }
+                }.padding(.horizontal, 12)
+                Slider(value: $appState.manualRPM, in: appState.manualRange, step: 50,
+                       onEditingChanged: { editing in if !editing { appState.applyManualRPM() } })
+                    .padding(.horizontal, 12)
+                Text("Temperature monitoring and overheat protection remain active.")
+                    .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 12)
+            } else {
+                SectionHeader(title: "PROFILE")
+                // Explicit button actions avoid Picker writes when sensor updates rebuild the menu.
+                ForEach(appState.availableProfiles) { profile in
+                    Button { appState.selectProfile(profile) } label: {
+                        HStack {
+                            Image(systemName: appState.activeProfile.id == profile.id ? "checkmark.circle.fill" : "circle")
+                            Text(profile.name)
+                            Spacer()
+                            if !profile.curve.handsOff {
+                                Text("\(Int(profile.curve.startTemp))→\(Int(profile.curve.ceilingTemp))°C")
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                         }
+                        .contentShape(Rectangle())
                     }
-                    .tag(profile.id)
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12).padding(.vertical, 3)
                 }
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
-            .padding(.horizontal, 12)
-
             Divider().padding(.vertical, 4)
 
             // Quick actions
@@ -180,7 +212,9 @@ struct MenuBarView: View {
             .padding(.top, 4)
             .padding(.bottom, 10)
         }
-        .frame(width: 260)
+        }
+        .frame(width: 280)
+        .frame(maxHeight: 680)
     }
 
     // MARK: - Helpers

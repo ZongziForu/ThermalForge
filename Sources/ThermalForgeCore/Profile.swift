@@ -54,6 +54,9 @@ public struct FanProfile: Codable, Identifiable, Equatable {
         /// Maximum fan speed as fraction of max RPM (0.0–1.0).
         public let maxRPMPercent: Float
 
+        /// Optional curve floor; absent in legacy JSON. Hardware minimum still applies.
+        public let minRPMPercent: Float?
+
         /// If true, this profile doesn't control fans — stays in Apple auto mode.
         public let handsOff: Bool
 
@@ -82,11 +85,12 @@ public struct FanProfile: Codable, Identifiable, Equatable {
                     maxRPMPercent: Float = 0.6, handsOff: Bool = false, alwaysOn: Bool = false,
                     curveShape: CurveShape = .linear, rampUpPerSec: Float = 0.05,
                     rampDownPerSec: Float = 0.025, sustainedTriggerSec: Float = 8,
-                    instantEngage: Bool = false) {
+                    instantEngage: Bool = false, minRPMPercent: Float? = nil) {
             self.stopTemp = stopTemp
             self.startTemp = startTemp
             self.ceilingTemp = ceilingTemp
             self.maxRPMPercent = maxRPMPercent
+            self.minRPMPercent = minRPMPercent
             self.handsOff = handsOff
             self.alwaysOn = alwaysOn
             self.curveShape = curveShape
@@ -136,13 +140,15 @@ public struct FanProfile: Codable, Identifiable, Equatable {
                 case .sCurve:
                     shaped = position * position * (3 - 2 * position)
                 }
-                return shaped * maxRPMPercent
+                let floor = minRPMPercent ?? 0
+                return floor + shaped * (maxRPMPercent - floor)
             }
 
             return nil
         }
     }
 
+    // Validate external JSON without imposing new behavior on built-in profiles.
     public init(id: String, name: String, curve: Curve) {
         self.id = id
         self.name = name
@@ -223,15 +229,38 @@ extension FanProfile {
                      sustainedTriggerSec: 6)
     )
 
-    public static let builtIn: [FanProfile] = [silent, balanced, performance, max]
+    /// Cooler than the generic profiles, with a broad band and slower acoustic ramps.
+    /// A comfort preset, not an Apple-published curve or a calibration result.
+    public static let summerSmooth = FanProfile(
+        id: "summer-smooth", name: "Summer Smooth",
+        curve: Curve(stopTemp: 50, startTemp: 55, ceilingTemp: 75,
+                     maxRPMPercent: 0.85, curveShape: .sCurve,
+                     rampUpPerSec: 0.04, rampDownPerSec: 0.015,
+                     sustainedTriggerSec: 4, minRPMPercent: 0.17)
+    )
+
+    /// Runtime-only manual profile. It keeps monitoring and the safety path alive.
+    /// Never restored on launch or loaded from a custom profile file.
+    public static func manual(rpm: Float, minRPM: Float, maxRPM: Float) -> FanProfile {
+        let maximum = maxRPM.isFinite && maxRPM > 0 ? maxRPM : 1
+        let minimum = minRPM.isFinite ? Swift.min(Swift.max(minRPM, 0), maximum) : maximum
+        let requested = rpm.isFinite ? Swift.min(Swift.max(rpm, minimum), maximum) : maximum
+        return FanProfile(id: "manual", name: "Manual",
+                          curve: Curve(stopTemp: -5, startTemp: 0, ceilingTemp: 1,
+                                       maxRPMPercent: requested / maximum, alwaysOn: true,
+                                       rampUpPerSec: 1, rampDownPerSec: 1,
+                                       sustainedTriggerSec: 0, instantEngage: true))
+    }
+
+    public static let builtIn: [FanProfile] = [silent, balanced, performance, max, summerSmooth]
 
     /// Resolve a persisted profile id to a known profile for launch restore. Searches the
     /// built-ins plus Smart (which is surfaced via its own button, so it isn't in
     /// `builtIn`). Returns Silent when the id is nil (nothing saved) or unrecognized (a
     /// profile removed or renamed in a later version), so a stale saved id never crashes.
-    public static func selectable(id: String?) -> FanProfile {
-        guard let id else { return .silent }
-        return (builtIn + [smart]).first { $0.id == id } ?? .silent
+    public static func selectable(id: String?, from profiles: [FanProfile] = builtIn + [smart]) -> FanProfile {
+        guard let id, id != "manual" else { return .silent }
+        return profiles.first { $0.id == id } ?? .silent
     }
 }
 
@@ -239,8 +268,7 @@ extension FanProfile {
 
 extension FanProfile {
     private static var profilesDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/ThermalForge/profiles")
+        UserDataLocation.current.appSupport.appendingPathComponent("profiles")
     }
 
     public func save() throws {
@@ -267,9 +295,11 @@ extension FanProfile {
         }
 
         var profiles = builtIn
-        for file in files where file.pathExtension == "json" {
+        for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where file.pathExtension == "json" {
             if let data = try? Data(contentsOf: file),
-               let profile = try? JSONDecoder().decode(FanProfile.self, from: data)
+               let profile = try? JSONDecoder().decode(FanProfile.self, from: data),
+               !["silent", "smart", "manual"].contains(profile.id),
+               profile.curve.validationError == nil
             {
                 if let idx = profiles.firstIndex(where: { $0.id == profile.id }) {
                     profiles[idx] = profile
@@ -289,4 +319,27 @@ extension FanProfile {
     public static let safetyTempThreshold: Float = 95.0
     /// Hysteresis deadband to prevent oscillation
     public static let hysteresisDegrees: Float = 5.0
+}
+
+
+extension FanProfile.Curve {
+    public var validationError: String? {
+        let numbers = [stopTemp, startTemp, ceilingTemp, maxRPMPercent,
+                       rampUpPerSec, rampDownPerSec, sustainedTriggerSec, minRPMPercent ?? 0]
+        guard numbers.allSatisfy({ $0.isFinite }) else { return "Non-finite curve value" }
+        guard !handsOff, !alwaysOn else { return "Custom curves must be temperature controlled" }
+        guard stopTemp >= 20, startTemp >= stopTemp + 5,
+              startTemp < FanProfile.safetyTempThreshold,
+              ceilingTemp <= FanProfile.safetyTempThreshold,
+              ceilingTemp > startTemp || (instantEngage && ceilingTemp == startTemp) else {
+            return "Invalid temperature range"
+        }
+        guard maxRPMPercent > 0, maxRPMPercent <= 1,
+              (minRPMPercent ?? 0) >= 0, (minRPMPercent ?? 0) <= maxRPMPercent,
+              rampUpPerSec > 0, rampDownPerSec > 0,
+              sustainedTriggerSec >= 0, sustainedTriggerSec <= 300 else {
+            return "Invalid fan speed or timing"
+        }
+        return nil
+    }
 }

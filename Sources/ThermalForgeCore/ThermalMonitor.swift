@@ -50,6 +50,8 @@ public enum MonitorState: Equatable {
 public final class ThermalMonitor {
     private let fanControl: FanControl
     private var timer: DispatchSourceTimer?
+    private var smoothedCurveTemp: Float?
+    private var belowStopTicks = 0
     private let queue = DispatchQueue(label: "com.thermalforge.monitor")
 
     public private(set) var activeProfile: FanProfile
@@ -145,6 +147,8 @@ public final class ThermalMonitor {
             fansCurrentlyRunning = false
             sustainedAboveCount = 0
             tickCounter = 0
+            smoothedCurveTemp = nil
+            belowStopTicks = 0
 
             if profile.id == "smart" {
                 // Reset Smart state and reload calibration data
@@ -178,7 +182,8 @@ public final class ThermalMonitor {
         }
 
         // Safety override: any sensor > 95°C
-        if maxTemp >= FanProfile.safetyTempThreshold {
+        if maxTemp >= FanProfile.safetyTempThreshold ||
+            (state == .safetyOverride && maxTemp >= FanProfile.safetyTempThreshold - FanProfile.hysteresisDegrees) {
             if state != .safetyOverride {
                 applyCommand(.setMax)
                 state = .safetyOverride
@@ -202,8 +207,15 @@ public final class ThermalMonitor {
 
         // Sustained trigger: track consecutive ticks above start threshold.
         // Per-profile duration — converted to tick count at runtime.
+        let controlTemp: Float
+        if activeProfile.id == "summer-smooth" {
+            let alpha = 1 - exp(-Float(tickInterval) / 3)
+            let previous = smoothedCurveTemp ?? maxTemp
+            controlTemp = previous + alpha * (maxTemp - previous)
+            smoothedCurveTemp = controlTemp
+        } else { controlTemp = maxTemp }
         let startThreshold = activeProfile.curve.startTemp
-        if maxTemp >= startThreshold {
+        if controlTemp >= startThreshold {
             sustainedAboveCount += 1
         } else {
             sustainedAboveCount = 0
@@ -213,7 +225,7 @@ public final class ThermalMonitor {
         if activeProfile.id == "smart" {
             tickSmart(status: status, peakTemp: maxTemp)
         } else {
-            tickCurve(status: status, peakTemp: maxTemp)
+            tickCurve(status: status, peakTemp: controlTemp)
         }
 
         // UI update at slower cadence (every 500ms)
@@ -428,7 +440,13 @@ public final class ThermalMonitor {
         }
 
         // Get target from curve (now applies curve shape: easeIn, linear, easeOut, sCurve)
-        guard let rawTarget = curve.targetPercent(at: peakTemp, fansCurrentlyRunning: fansCurrentlyRunning) else {
+        var requested = curve.targetPercent(at: peakTemp, fansCurrentlyRunning: fansCurrentlyRunning)
+        if activeProfile.id == "summer-smooth", fansCurrentlyRunning, requested == nil {
+            belowStopTicks += 1
+            // Twenty seconds continuously cool before returning control to macOS.
+            if Float(belowStopTicks) * Float(tickInterval) < 20 { requested = minRPM / maxRPM }
+        } else { belowStopTicks = 0 }
+        guard let rawTarget = requested else {
             // Curve says fans should be off
             if fansCurrentlyRunning {
                 applyCommand(.resetAuto)

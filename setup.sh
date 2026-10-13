@@ -15,6 +15,7 @@ echo "Installing (requires admin password once)..."
 
 # Kill old app and reset fans
 pkill -x ThermalForgeApp 2>/dev/null || true
+pkill -x ThermalForge 2>/dev/null || true
 sleep 1
 /usr/local/bin/thermalforge auto 2>/dev/null || true
 
@@ -41,6 +42,8 @@ sudo .build/release/thermalforge build-app \
     --binary .build/release/ThermalForgeApp \
     --icon ThermalForge.icns \
     --dest /Applications/ThermalForge.app
+# Local builds need a complete bundle signature; this requires no paid account.
+sudo /usr/bin/codesign --force --deep --sign - /Applications/ThermalForge.app
 # Clear every file in the bundle, not just the top folder. find walks the tree
 # instead of relying on -r; -s clears a symlink itself, never what it points to.
 sudo find /Applications/ThermalForge.app -exec "$XATTR" -cs {} +

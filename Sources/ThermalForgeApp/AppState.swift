@@ -12,6 +12,11 @@ import SwiftUI
 @MainActor
 final class AppState: ObservableObject {
     @Published var latestStatus: ThermalStatus?
+    let availableProfiles = FanProfile.loadAll()
+    @Published var batteryPower: BatteryPowerStatus?
+    @Published var manualRPM: Double = 2000
+    @Published var isManualMode = false
+    private var profileBeforeManual: FanProfile = .summerSmooth
     @Published var activeProfile: FanProfile = .silent
     @Published var monitorState: MonitorState = .idle
     @Published var maxTemp: Float?
@@ -50,6 +55,7 @@ final class AppState: ObservableObject {
     private var monitor: ThermalMonitor?
     private let executor = PrivilegedExecutor()
     private var heartbeatTimer: DispatchSourceTimer?
+    private var powerTimer: DispatchSourceTimer?
     /// Consecutive failed heartbeats, for debouncing `daemonUnreachable`.
     private var heartbeatFailures = 0
 
@@ -98,6 +104,7 @@ final class AppState: ObservableObject {
         ThermalLogger.cleanExpired()
 
         startMonitoring()
+        startPowerMonitoring()
         // startHeartbeat() is intentionally NOT called here — it is launched from
         // adoptDaemonStateOnLaunch()'s @MainActor completion (the ordering gate),
         // so the first heartbeat poll can never land before adopt has applied the
@@ -346,7 +353,7 @@ final class AppState: ObservableObject {
         monitor.onUpdate = { [weak self] status, profile, state in
             Task { @MainActor [weak self] in
                 self?.latestStatus = status
-                self?.activeProfile = profile
+                if self?.isManualMode != true { self?.activeProfile = profile }
                 self?.monitorState = state
                 // Max of only the displayed sensors
                 // Peak across all CPU and GPU sensors for menu bar display
@@ -374,6 +381,48 @@ final class AppState: ObservableObject {
         self.monitor = monitor
     }
 
+    // Battery reading is independent of the 100ms thermal loop. No subprocesses.
+    private func startPowerMonitoring() {
+        let timer = DispatchSource.makeTimerSource(queue: heartbeatQueue)
+        timer.schedule(deadline: .now(), repeating: 5, leeway: .milliseconds(500))
+        timer.setEventHandler { [weak self] in
+            let status = BatteryPowerStatus.read()
+            Task { @MainActor [weak self] in self?.batteryPower = status }
+        }
+        timer.resume()
+        powerTimer = timer
+    }
+
+    var manualRange: ClosedRange<Double> {
+        guard let fan = latestStatus?.fans.first, fan.maxRPM > fan.minRPM else { return 1200...7200 }
+        return Double(fan.minRPM)...Double(fan.maxRPM)
+    }
+
+    func enableManualMode() {
+        guard latestStatus?.fans.isEmpty == false, !daemonUnreachable else { return }
+        profileBeforeManual = activeProfile
+        manualRPM = max(manualRange.lowerBound,
+                        min(Double(latestStatus?.fans.first?.actualRPM ?? 2000), manualRange.upperBound))
+        isManualMode = true
+        applyManualRPM()
+    }
+
+    func applyManualRPM() {
+        guard isManualMode else { return }
+        let took = seizeControl()
+        manualRPM = min(max(manualRPM, manualRange.lowerBound), manualRange.upperBound)
+        let profile = FanProfile.manual(rpm: Float(manualRPM),
+                                        minRPM: Float(manualRange.lowerBound),
+                                        maxRPM: Float(manualRange.upperBound))
+        activeProfile = profile
+        if took { commandPump.submit(.resetAuto) }
+        monitor?.switchProfile(profile)
+    }
+
+    func leaveManualMode() {
+        selectProfile(profileBeforeManual)
+    }
+
     // MARK: - Actions
 
     /// Explicit user takeover of any reflected CLI hold. Returns whether one was
@@ -387,6 +436,7 @@ final class AppState: ObservableObject {
     }
 
     func setSmart() {
+        isManualMode = false
         let took = seizeControl()
         activeProfile = .smart
         persistSelectedProfile(FanProfile.smart.id)
@@ -415,6 +465,7 @@ final class AppState: ObservableObject {
                     TFLogger.shared.error("Reset to Default failed — daemon unreachable; fans NOT reset")
                     return
                 }
+                self.isManualMode = false
                 self.activeProfile = .silent
                 // Default is a deliberate user click, so it persists Silent — but only
                 // here, on the daemon-confirmed success path, never on a failed reset.
@@ -426,6 +477,7 @@ final class AppState: ObservableObject {
     }
 
     func selectProfile(_ profile: FanProfile) {
+        isManualMode = false
         let took = seizeControl()
         activeProfile = profile
         persistSelectedProfile(profile.id)
@@ -456,7 +508,8 @@ final class AppState: ObservableObject {
     /// The profile to restore at launch: the persisted choice resolved against the known
     /// profiles, or Silent when nothing is saved or the id no longer exists.
     private func restoredProfile() -> FanProfile {
-        FanProfile.selectable(id: UserDefaults.standard.string(forKey: Self.selectedProfileKey))
+        FanProfile.selectable(id: UserDefaults.standard.string(forKey: Self.selectedProfileKey),
+                              from: availableProfiles + [.smart])
     }
 
     // MARK: - Daemon recovery

@@ -73,9 +73,9 @@ struct ProfileTests {
         #expect(FanProfile.smart.curve.sustainedTriggerSec == 6)
     }
 
-    @Test("Four built-in profiles exist")
+    @Test("Five built-in profiles exist")
     func builtInCount() {
-        #expect(FanProfile.builtIn.count == 4)
+        #expect(FanProfile.builtIn.count == 5)
         let ids = FanProfile.builtIn.map(\.id)
         #expect(ids.contains("silent"))
         #expect(ids.contains("balanced"))
