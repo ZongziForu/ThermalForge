@@ -463,6 +463,7 @@ final class AppState: ObservableObject {
         activeProfile = profile
         if took { commandPump.submit(.resetAuto) }
         monitor?.switchProfile(profile)
+        updateTouchBar(force: true)
     }
 
     func leaveManualMode() {
@@ -492,7 +493,9 @@ final class AppState: ObservableObject {
             targetRPM: manualRPM, minRPM: manualRange.lowerBound, maxRPM: manualRange.upperBound,
             safetyOverride: monitorState == .safetyOverride,
             controlAvailable: !daemonUnreachable && externalHold == nil && latestStatus?.fans.isEmpty == false,
-            fahrenheit: useFahrenheit))
+            fahrenheit: useFahrenheit,
+            mode: isManualMode ? .manual : activeProfile.id == "summer-smooth" ? .summer
+                : activeProfile.id == "silent" ? .automatic : nil))
     }
 
     // MARK: - Actions
@@ -517,6 +520,7 @@ final class AppState: ObservableObject {
         // orphaned; the Smart tick then establishes supervised control. Off-main
         // one-shot on the pump (never coalesced/reordered).
         if took { commandPump.submit(.resetAuto) }
+        updateTouchBar(force: true)
         TFLogger.shared.profile("Smart activated")
     }
 
@@ -543,6 +547,7 @@ final class AppState: ObservableObject {
                 // here, on the daemon-confirmed success path, never on a failed reset.
                 self.persistSelectedProfile(FanProfile.silent.id)
                 self.monitor?.switchProfile(.silent)
+                self.updateTouchBar(force: true)
                 TFLogger.shared.profile("Reset to Default (Silent (Apple Default))")
             }
         }
@@ -554,6 +559,7 @@ final class AppState: ObservableObject {
         activeProfile = profile
         persistSelectedProfile(profile.id)
         monitor?.switchProfile(profile)
+        updateTouchBar(force: true)
         TFLogger.shared.profile("Selected: \(profile.name)")
 
         // Reset to auto when switching to a hands-off profile, OR when taking over

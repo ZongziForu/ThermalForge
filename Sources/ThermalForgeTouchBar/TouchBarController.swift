@@ -3,6 +3,8 @@ import ObjectiveC
 import Darwin
 import os
 
+public enum TouchBarMode: Int, Sendable { case summer = 0, manual = 1, automatic = 2 }
+
 public struct TouchBarReading: Equatable, Sendable {
     public var cpuTemperature: Float?
     public var gpuTemperature: Float?
@@ -10,6 +12,7 @@ public struct TouchBarReading: Equatable, Sendable {
     public var batteryWatts: Double?
     public var charging: Bool
     public var manual: Bool
+    public var mode: TouchBarMode?
     public var targetRPM: Double
     public var minRPM: Double
     public var maxRPM: Double
@@ -22,13 +25,13 @@ public struct TouchBarReading: Equatable, Sendable {
                 charging: Bool = false, manual: Bool = false,
                 targetRPM: Double = 2000, minRPM: Double = 1200, maxRPM: Double = 7200,
                 safetyOverride: Bool = false, controlAvailable: Bool = false,
-                fahrenheit: Bool = false) {
+                fahrenheit: Bool = false, mode: TouchBarMode? = nil) {
         self.cpuTemperature = cpuTemperature; self.gpuTemperature = gpuTemperature
         self.actualRPM = actualRPM; self.batteryWatts = batteryWatts
         self.charging = charging; self.manual = manual; self.targetRPM = targetRPM
         self.minRPM = minRPM; self.maxRPM = maxRPM
         self.safetyOverride = safetyOverride; self.controlAvailable = controlAvailable
-        self.fahrenheit = fahrenheit
+        self.fahrenheit = fahrenheit; self.mode = mode
     }
 
     public func temperatureText(_ value: Float?) -> String {
@@ -206,7 +209,7 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
     private func updatePanel() {
         metrics?.stringValue = "CPU \(reading.temperatureText(reading.cpuTemperature))  GPU \(reading.temperatureText(reading.gpuTemperature))  |  \(reading.actualRPM.map { "\($0) RPM" } ?? "RPM —")  |  \(reading.powerText)"
         modes?.isEnabled = reading.controlAvailable
-        modes?.selectedSegment = reading.manual ? 1 : -1
+        modes?.selectedSegment = reading.manual ? TouchBarMode.manual.rawValue : reading.mode?.rawValue ?? -1
         if sliderNeedsSync {
             slider?.slider.minValue = reading.minRPM
             slider?.slider.maxValue = max(reading.maxRPM, reading.minRPM + 1)
@@ -236,6 +239,9 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
         case 2: action(.automatic)
         default: break
         }
+        // Reflect the last confirmed reading until the application sends the
+        // resulting mode; a failed Default command must not look successful.
+        updatePanel()
     }
     @objc public func setSpeed(_ sender: AnyObject) {
         guard reading.controlAvailable, reading.manual, !reading.safetyOverride else { return }
@@ -258,7 +264,7 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
         }
         if identifier == modesID {
             let item = NSCustomTouchBarItem(identifier: identifier)
-            let buttons = NSSegmentedControl(labels: ["Summer", "Manual", "Default"], trackingMode: .momentary,
+            let buttons = NSSegmentedControl(labels: ["Summer", "Manual", "Default"], trackingMode: .selectOne,
                                              target: self, action: #selector(selectMode(_:)))
             modes = buttons; item.view = buttons; updatePanel(); return item
         }

@@ -56,6 +56,24 @@ struct TouchBarTests {
         #expect(backend.removals == 1)
     }
 
+    @Test("Mode buttons retain confirmed selection and follow menu profile changes") @MainActor
+    func modeSelection() {
+        let controller = TouchBarController(namespace: "test", backend: FakeTouchBarBackend()) { _ in }
+        #expect(controller.setEnabled(true))
+        let item = controller.touchBar(NSTouchBar(), makeItemForIdentifier: .init("test.touchbar.modes"))
+        let buttons = (item as? NSCustomTouchBarItem)?.view as? NSSegmentedControl
+        controller.openPanel()
+        #expect(buttons?.trackingMode == .selectOne)
+        controller.update(TouchBarReading(mode: .summer))
+        #expect(buttons?.selectedSegment == 0)
+        controller.update(TouchBarReading(manual: true))
+        #expect(buttons?.selectedSegment == 1)
+        controller.update(TouchBarReading(mode: .automatic))
+        #expect(buttons?.selectedSegment == 2)
+        controller.update(TouchBarReading())
+        #expect(buttons?.selectedSegment == -1)
+    }
+
     @Test("Missing readings, Fahrenheit and net battery power remain explicit")
     func display() {
         let reading = TouchBarReading(cpuTemperature: 50, batteryWatts: -12.4, fahrenheit: true)

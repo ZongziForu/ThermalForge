@@ -7,6 +7,7 @@ import ThermalForgeTouchBar
     var timer: Timer?
     var tick = 0
     var manual = false
+    var mode: TouchBarMode = .summer
     var targetRPM = 2000.0
     var window: NSWindow?
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -14,8 +15,9 @@ import ThermalForgeTouchBar
         controller = TouchBarController { [weak self] action in
             guard let self else { return }
             switch action {
-            case .manual: self.manual = true
-            case .summer, .automatic: self.manual = false
+            case .manual: self.manual = true; self.mode = .manual
+            case .summer: self.manual = false; self.mode = .summer
+            case .automatic: self.manual = false; self.mode = .automatic
             case .speed(let rpm): self.targetRPM = rpm
             }
             self.update()
@@ -46,7 +48,7 @@ import ThermalForgeTouchBar
         tick += 1
         controller?.update(TouchBarReading(cpuTemperature: Float(55 + tick % 5), gpuTemperature: 49,
                                           actualRPM: 2000 + tick % 5 * 50, batteryWatts: 25,
-                                          charging: true, manual: manual, targetRPM: targetRPM, controlAvailable: true))
+                                          charging: true, manual: manual, targetRPM: targetRPM, controlAvailable: true, mode: mode))
     }
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
