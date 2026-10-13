@@ -76,6 +76,39 @@ struct SMCParamStruct {
 public final class SMCConnection {
 
     private let connection: io_connect_t
+    private var metadata = SMCMetadataCache()
+    private var inventoryAttempted = false
+    private var inventoryRetryAt: TimeInterval = 0
+
+    /// Call on the same serialized hardware queue as reads and writes.
+    public func invalidateCache() {
+        metadata = SMCMetadataCache()
+        inventoryAttempted = false
+        inventoryRetryAt = 0
+    }
+
+    private func prepareInventory() {
+        guard !inventoryAttempted,
+              ProcessInfo.processInfo.systemUptime >= inventoryRetryAt else { return }
+        inventoryAttempted = true // #KEY is read recursively below.
+        let count = getKeyCount()
+        guard count > 0, count < 100_000 else {
+            inventoryAttempted = false
+            inventoryRetryAt = ProcessInfo.processInfo.systemUptime + 5
+            return
+        }
+        var keys = Set<String>()
+        for index in 0..<count {
+            guard let key = getKeyAtIndex(index) else {
+                // An incomplete inventory never excludes a sensor.
+                inventoryAttempted = false
+                inventoryRetryAt = ProcessInfo.processInfo.systemUptime + 5
+                return
+            }
+            keys.insert(key)
+        }
+        metadata.knownKeys = keys
+    }
 
     public init?() {
         var iterator: io_iterator_t = 0
@@ -111,20 +144,19 @@ public final class SMCConnection {
         var input = SMCParamStruct()
         var output = SMCParamStruct()
 
-        // Get key info (data size)
-        input.key = fourCharCode(key)
-        input.data8 = SMCCommand.readKeyInfo.rawValue
-        guard callSMC(&input, &output) == kIOReturnSuccess else {
+        prepareInventory()
+        guard let info = metadata.info(for: key, load: { self.getKeyInfo(key) }) else {
             return (false, [], 0)
         }
-
-        let dataSize = output.keyInfo.dataSize
-        guard dataSize > 0 else { return (false, [], 0) }
+        let dataSize = info.size
+        guard dataSize > 0, dataSize <= 32 else { return (false, [], 0) }
+        input.key = fourCharCode(key)
 
         // Read value
         input.keyInfo.dataSize = dataSize
         input.data8 = SMCCommand.readBytes.rawValue
-        guard callSMC(&input, &output) == kIOReturnSuccess else {
+        guard callSMC(&input, &output) == kIOReturnSuccess, output.result == 0 else {
+            metadata.remove(key)
             return (false, [], 0)
         }
 
@@ -195,6 +227,7 @@ public final class SMCConnection {
             return nil
         }
 
+        guard output.result == 0, output.keyInfo.dataSize > 0 else { return nil }
         return (output.keyInfo.dataSize, fourCharString(output.keyInfo.dataType))
     }
 
@@ -251,4 +284,19 @@ extension SMCParamStruct {
         UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
         UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8
     )
+}
+
+/// Each connection discovers its own inventory. Failed metadata loads are not
+/// cached: a transient I/O failure cannot permanently remove a real sensor.
+struct SMCMetadataCache {
+    var knownKeys: Set<String>?
+    private var values: [String: (size: UInt32, type: String)] = [:]
+    mutating func info(for key: String, load: () -> (size: UInt32, type: String)?) -> (size: UInt32, type: String)? {
+        if let knownKeys, !knownKeys.contains(key) { return nil }
+        if let value = values[key] { return value }
+        guard let value = load(), value.size > 0 else { return nil }
+        values[key] = value
+        return value
+    }
+    mutating func remove(_ key: String) { values.removeValue(forKey: key) }
 }

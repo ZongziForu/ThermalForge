@@ -22,6 +22,7 @@ final class AppState: ObservableObject {
     private var lastTouchBarUpdate = Date.distantPast
     private var terminationObserver: NSObjectProtocol?
     private var launchObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
     private var touchBarReady = false
     private lazy var touchBarController = TouchBarController { [weak self] action in
         guard let self else { return }
@@ -129,6 +130,11 @@ final class AppState: ObservableObject {
 
         startMonitoring()
         startPowerMonitoring()
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.monitor?.invalidateHardwareCache() }
+        }
         if AppLaunchState.ready {
             touchBarReady = true
             configureTouchBar()
@@ -227,6 +233,7 @@ final class AppState: ObservableObject {
     }
 
     deinit {
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
         heartbeatTimer?.cancel()
     }
 
@@ -394,16 +401,18 @@ final class AppState: ObservableObject {
         let monitor = ThermalMonitor(fanControl: fc, profile: activeProfile)
         monitor.onUpdate = { [weak self] status, profile, state in
             Task { @MainActor [weak self] in
-                self?.latestStatus = status
-                if self?.isManualMode != true { self?.activeProfile = profile }
-                self?.monitorState = state
+                guard let self else { return }
+                if self.latestStatus != status { self.latestStatus = status }
+                if !self.isManualMode && self.activeProfile != profile { self.activeProfile = profile }
+                if self.monitorState != state { self.monitorState = state }
                 // Max of only the displayed sensors
                 // Peak across all CPU and GPU sensors for menu bar display
                 let displayPrefixes = ["TC", "Tp", "TG", "Tg"]
-                self?.maxTemp = status.temperatures
+                let temperature = status.temperatures
                     .filter { key, _ in displayPrefixes.contains(where: { key.hasPrefix($0) }) }
                     .values.max()
-                self?.updateTouchBar()
+                if self.maxTemp != temperature { self.maxTemp = temperature }
+                self.updateTouchBar()
             }
         }
         monitor.onFanCommand = { [weak self] command in
@@ -414,7 +423,7 @@ final class AppState: ObservableObject {
                 // control when they pick a profile or press Default.
                 guard self.externalHold == nil else { return }
                 // Hand off to the coalescing pump; the blocking socket write happens
-                // OFF the main thread. During a ramp these fire up to ~10x/sec;
+                // OFF the main thread. During a ramp these fire up to ~2x/sec;
                 // previously each ran a blocking round-trip on the main actor and
                 // starved the run loop (v0.1.7).
                 self.commandPump.submit(command)
@@ -424,14 +433,14 @@ final class AppState: ObservableObject {
         self.monitor = monitor
     }
 
-    // Battery reading is independent of the 100ms thermal loop. No subprocesses.
+    // Battery reading is independent of the 500ms thermal loop. No subprocesses.
     private func startPowerMonitoring() {
         let timer = DispatchSource.makeTimerSource(queue: heartbeatQueue)
         timer.schedule(deadline: .now(), repeating: 5, leeway: .milliseconds(500))
         timer.setEventHandler { [weak self] in
             let status = BatteryPowerStatus.read()
             Task { @MainActor [weak self] in
-                self?.batteryPower = status
+                if self?.batteryPower != status { self?.batteryPower = status }
                 self?.updateTouchBar()
             }
         }

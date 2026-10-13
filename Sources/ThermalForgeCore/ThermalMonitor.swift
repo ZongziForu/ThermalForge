@@ -5,8 +5,8 @@
 //  Polling engine that reads temperatures and applies fan profiles.
 //
 //  Dual-cadence design:
-//  - Thermal tick (100ms): read temps, calculate curve, apply ramp governor, write fan speed
-//  - Monitor tick (2s): process capture, anomaly detection, history logging
+//  - Thermal tick (500ms): read temps, calculate curve, apply ramp governor, write fan speed
+//  - Monitor tick (2s): anomaly detection; process snapshots every 10s
 //
 
 import Darwin
@@ -51,7 +51,8 @@ public final class ThermalMonitor {
     private let fanControl: FanControl
     private var timer: DispatchSourceTimer?
     private var smoothedCurveTemp: Float?
-    private var belowStopTicks = 0
+    private var belowStop = ThermalDwell()
+    private var belowStopSeconds: Float { belowStop.elapsed }
     private let queue = DispatchQueue(label: "com.thermalforge.monitor")
 
     public private(set) var activeProfile: FanProfile
@@ -60,28 +61,22 @@ public final class ThermalMonitor {
 
     // MARK: - Tick Timing
 
-    /// Thermal tick interval in seconds. Fan control runs at this rate.
-    private let tickInterval: Float
-
-    /// Monitor cadence: process capture + anomaly detection every N thermal ticks.
-    /// At 100ms thermal tick, 20 × 0.1s = 2 seconds.
-    private static let monitorCadence = 20
-
-    /// UI update cadence: onUpdate fires every N thermal ticks.
-    /// At 100ms thermal tick, 5 × 0.1s = 500ms — smooth UI without excessive redraws.
-    private static let uiUpdateCadence = 5
-
-    private var tickCounter = 0
+    private var timing = ThermalTiming()
+    private var tickInterval: Float = 0
+    private var monitorDue = false
+    private var currentTime: TimeInterval = 0
+    private var nextProcessCapture: TimeInterval = 0
 
     // MARK: - Fan State
 
     private var lastAppliedRPMPercent: Float = 0
     private var fansCurrentlyRunning = false
-    private var sustainedAboveCount = 0
+    private var aboveThreshold = ThermalDwell()
+    private var sustainedAboveSeconds: Float { aboveThreshold.elapsed }
 
     // MARK: - Smart Profile State
 
-    private var tempHistory: [Float] = []
+    private var tempHistory: [(time: TimeInterval, temperature: Float)] = []
 
     // MARK: - Anomaly Detection
 
@@ -91,8 +86,7 @@ public final class ThermalMonitor {
 
     // MARK: - Process Buffer
 
-    /// Rolling buffer — captures what was running BEFORE a spike.
-    /// 15 snapshots × 2 seconds = 30 seconds of pre-spike history.
+    /// Three process snapshots at 10-second cadence for anomaly diagnosis.
     private var processBuffer: [(timestamp: String, processes: String)] = []
     private let isoFormatter = ISO8601DateFormatter()
 
@@ -109,7 +103,7 @@ public final class ThermalMonitor {
         return data
     }()
 
-    /// Called on UI update cadence (every 500ms) with updated status
+    /// Called on UI update cadence (every 1s) with updated status
     public var onUpdate: ((ThermalStatus, FanProfile, MonitorState) -> Void)?
     /// Called when a fan command needs to be executed (may require privilege)
     public var onFanCommand: ((FanCommand) throws -> Void)?
@@ -117,16 +111,15 @@ public final class ThermalMonitor {
     public init(fanControl: FanControl, profile: FanProfile = .silent) {
         self.fanControl = fanControl
         self.activeProfile = profile
-        self.tickInterval = 0.1
     }
 
     // MARK: - Lifecycle
 
-    public func start(interval: TimeInterval = 0.1) {
+    public func start(interval: TimeInterval = 0.5) {
         stop()
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: interval)
+        timer.schedule(deadline: .now(), repeating: max(0.1, interval), leeway: .milliseconds(50))
         timer.setEventHandler { [weak self] in
             self?.tick()
         }
@@ -139,16 +132,30 @@ public final class ThermalMonitor {
         timer = nil
     }
 
+    /// Enqueue wake invalidation on the hardware queue; never race an SMC read.
+    public func invalidateHardwareCache() {
+        queue.async { [self] in
+            fanControl.invalidateHardwareCache()
+            timing = ThermalTiming()
+            aboveThreshold.reset()
+            belowStop.reset()
+            smoothedCurveTemp = nil
+            tempHistory.removeAll()
+            anomalyHistory.removeAll()
+            nextProcessCapture = 0
+        }
+    }
+
     /// Update the active profile.
     public func switchProfile(_ profile: FanProfile) {
         queue.async { [self] in
             activeProfile = profile
             lastAppliedRPMPercent = 0
             fansCurrentlyRunning = false
-            sustainedAboveCount = 0
-            tickCounter = 0
+            aboveThreshold.reset()
+            timing = ThermalTiming()
             smoothedCurveTemp = nil
-            belowStopTicks = 0
+            belowStop.reset()
 
             if profile.id == "smart" {
                 // Reset Smart state and reload calibration data
@@ -169,15 +176,31 @@ public final class ThermalMonitor {
     // MARK: - Polling
 
     private func tick() {
-        guard let status = try? fanControl.status() else { return }
+        currentTime = ProcessInfo.processInfo.systemUptime
+        let clock = timing.advance(now: currentTime)
+        tickInterval = Float(clock.elapsed)
+        monitorDue = clock.monitorDue
+        if clock.resumed {
+            fanControl.invalidateHardwareCache()
+            aboveThreshold.reset()
+            belowStop.reset()
+            smoothedCurveTemp = nil
+            tempHistory.removeAll()
+            anomalyHistory.removeAll()
+        }
+        guard let status = try? fanControl.status() else {
+            aboveThreshold.reset()
+            belowStop.reset()
+            return
+        }
         latestStatus = status
 
         // Peak CPU (TC/Tp) + GPU (TG/Tg) — the shared safety-floor sensor extraction,
         // so the client monitor and the daemon's floor read the identical value.
         let maxTemp = status.safetyPeakTemp
 
-        // Monitor cadence: process capture + anomaly detection (every 2 seconds)
-        if tickCounter % Self.monitorCadence == 0 {
+        // Monitor cadence: anomaly detection every 2 seconds
+        if monitorDue {
             monitorTick(status: status, maxTemp: maxTemp)
         }
 
@@ -191,10 +214,9 @@ public final class ThermalMonitor {
                 lastAppliedRPMPercent = 1.0
                 TFLogger.shared.safety("Override triggered: \(String(format: "%.1f", maxTemp))°C — fans maxed")
             }
-            if tickCounter % Self.uiUpdateCadence == 0 {
+            if clock.uiDue {
                 onUpdate?(status, activeProfile, state)
             }
-            tickCounter += 1
             return
         }
 
@@ -205,21 +227,16 @@ public final class ThermalMonitor {
             state = .idle
         }
 
-        // Sustained trigger: track consecutive ticks above start threshold.
-        // Per-profile duration — converted to tick count at runtime.
+        // Sustained trigger: measure time from the first observed threshold crossing.
         let controlTemp: Float
         if activeProfile.id == "summer-smooth" {
-            let alpha = 1 - exp(-Float(tickInterval) / 3)
+            let alpha = ThermalTiming.smoothingAlpha(elapsed: tickInterval, timeConstant: 3)
             let previous = smoothedCurveTemp ?? maxTemp
             controlTemp = previous + alpha * (maxTemp - previous)
             smoothedCurveTemp = controlTemp
         } else { controlTemp = maxTemp }
         let startThreshold = activeProfile.curve.startTemp
-        if controlTemp >= startThreshold {
-            sustainedAboveCount += 1
-        } else {
-            sustainedAboveCount = 0
-        }
+        aboveThreshold.update(active: controlTemp >= startThreshold, now: currentTime)
 
         // Profile-specific logic
         if activeProfile.id == "smart" {
@@ -228,24 +245,26 @@ public final class ThermalMonitor {
             tickCurve(status: status, peakTemp: controlTemp)
         }
 
-        // UI update at slower cadence (every 500ms)
-        if tickCounter % Self.uiUpdateCadence == 0 {
+        // UI update at slower cadence (every 1s)
+        if clock.uiDue {
             onUpdate?(status, activeProfile, state)
         }
 
-        tickCounter += 1
     }
 
     // MARK: - Monitor Cadence (every 2 seconds)
 
     /// Heavy operations: process capture + anomaly detection.
-    /// Runs at 2-second intervals to avoid sysctl overhead at 100ms.
+    /// Temperature anomaly history runs every 2s; process capture every 10s.
     private func monitorTick(status: ThermalStatus, maxTemp: Float) {
         // Rolling process buffer — always capturing, like a security camera
-        let currentProcs = captureTopProcesses()
-        let ts = isoFormatter.string(from: Date())
-        processBuffer.append((timestamp: ts, processes: currentProcs))
-        if processBuffer.count > 15 { processBuffer.removeFirst() }
+        if currentTime >= nextProcessCapture {
+            nextProcessCapture = currentTime + 10
+            let currentProcs = captureTopProcesses()
+            let ts = isoFormatter.string(from: Date())
+            processBuffer.append((timestamp: ts, processes: currentProcs))
+            if processBuffer.count > 3 { processBuffer.removeFirst() }
+        }
 
         // Anomaly detection: two tiers
         // Tier 1: instant spike — >5°C between consecutive readings (2 seconds)
@@ -289,7 +308,7 @@ public final class ThermalMonitor {
 
             // Dump the rolling buffer on any spike — shows what was running BEFORE
             if spikeDetected {
-                TFLogger.shared.info("Pre-spike process history (last \(processBuffer.count * 2)s):")
+                TFLogger.shared.info("Pre-spike process history (recent snapshots):")
                 for entry in processBuffer {
                     TFLogger.shared.info("  \(entry.timestamp): \(entry.processes)")
                 }
@@ -312,8 +331,8 @@ public final class ThermalMonitor {
 
     private func tickSmart(status: ThermalStatus, peakTemp: Float) {
         // Sample temperature history at monitor cadence (2s) for stable rate-of-change
-        if tickCounter % Self.monitorCadence == 0 {
-            tempHistory.append(peakTemp)
+        if monitorDue {
+            tempHistory.append((currentTime, peakTemp))
             if tempHistory.count > 4 { tempHistory.removeFirst() }
         }
 
@@ -342,13 +361,7 @@ public final class ThermalMonitor {
         }
 
         // Sustained trigger: per-profile duration
-        let sustainedTicksNeeded = Int(activeProfile.curve.sustainedTriggerSec / tickInterval)
-        if !fansCurrentlyRunning && sustainedAboveCount < sustainedTicksNeeded {
-            if sustainedAboveCount == 1 {
-                TFLogger.shared.fan("Sustained trigger: \(String(format: "%.1f", peakTemp))°C — waiting (\(sustainedAboveCount)/\(sustainedTicksNeeded)) [Smart]")
-            }
-            return
-        }
+        if !fansCurrentlyRunning && sustainedAboveSeconds < activeProfile.curve.sustainedTriggerSec { return }
 
         let rate = rateOfChange()
         var targetPct: Float
@@ -393,7 +406,7 @@ public final class ThermalMonitor {
             targetPct = max(targetPct, lastAppliedRPMPercent - rampDown)
         }
 
-        // Apply if changed meaningfully (threshold scaled for 100ms ticks)
+        // Apply only meaningful speed changes
         if abs(targetPct - lastAppliedRPMPercent) > 0.002 {
             let targetRPM = max(maxRPM * targetPct, minRPM)
             applyCommand(.setRPM(targetRPM))
@@ -416,9 +429,9 @@ public final class ThermalMonitor {
         guard tempHistory.count >= 2 else { return 0 }
         let oldest = tempHistory.first!
         let newest = tempHistory.last!
-        // tempHistory sampled at monitor cadence (2s intervals)
-        let seconds = Float(tempHistory.count - 1) * Float(Self.monitorCadence) * tickInterval
-        return (newest - oldest) / seconds
+        let seconds = Float(newest.time - oldest.time)
+        guard seconds > 0 else { return 0 }
+        return (newest.temperature - oldest.temperature) / seconds
     }
 
     // MARK: - Curve-Based Profiles
@@ -442,10 +455,10 @@ public final class ThermalMonitor {
         // Get target from curve (now applies curve shape: easeIn, linear, easeOut, sCurve)
         var requested = curve.targetPercent(at: peakTemp, fansCurrentlyRunning: fansCurrentlyRunning)
         if activeProfile.id == "summer-smooth", fansCurrentlyRunning, requested == nil {
-            belowStopTicks += 1
+            belowStop.update(active: true, now: currentTime)
             // Twenty seconds continuously cool before returning control to macOS.
-            if Float(belowStopTicks) * Float(tickInterval) < 20 { requested = minRPM / maxRPM }
-        } else { belowStopTicks = 0 }
+            if belowStopSeconds < 20 { requested = minRPM / maxRPM }
+        } else { belowStop.reset() }
         guard let rawTarget = requested else {
             // Curve says fans should be off
             if fansCurrentlyRunning {
@@ -459,14 +472,7 @@ public final class ThermalMonitor {
         }
 
         // Sustained trigger: per-profile duration.
-        // Converted to tick count at runtime based on tick interval.
-        let sustainedTicksNeeded = Int(curve.sustainedTriggerSec / tickInterval)
-        if !fansCurrentlyRunning && sustainedAboveCount < sustainedTicksNeeded {
-            if sustainedAboveCount == 1 {
-                TFLogger.shared.fan("Sustained trigger: \(String(format: "%.1f", peakTemp))°C — waiting (\(sustainedAboveCount)/\(sustainedTicksNeeded)) [\(activeProfile.name)]")
-            }
-            return
-        }
+        if !fansCurrentlyRunning && sustainedAboveSeconds < curve.sustainedTriggerSec { return }
 
         // 0.001 signals "keep at minimum" (hysteresis band)
         var targetPct = rawTarget <= 0.001 ? minRPM / maxRPM : rawTarget
@@ -489,7 +495,7 @@ public final class ThermalMonitor {
             targetPct = max(targetPct, lastAppliedRPMPercent - rampDown)
         }
 
-        // Apply if changed meaningfully (threshold scaled for 100ms ticks)
+        // Apply only meaningful speed changes
         if abs(targetPct - lastAppliedRPMPercent) > 0.002 {
             let targetRPM = max(maxRPM * targetPct, minRPM)
             applyCommand(.setRPM(targetRPM))
@@ -554,4 +560,36 @@ public final class ThermalMonitor {
         }
     }
 
+}
+
+/// Monotonic deadlines keep control/UI/history timing independent of poll rate.
+struct ThermalTiming {
+    private var lastTick: TimeInterval?
+    private var nextMonitor: TimeInterval = 0
+    private var nextUI: TimeInterval = 0
+    mutating func advance(now: TimeInterval) -> (elapsed: TimeInterval, monitorDue: Bool, uiDue: Bool, resumed: Bool) {
+        let gap = lastTick.map { max(0, now - $0) } ?? 0
+        let resumed = gap > 2
+        lastTick = now
+        let monitorDue = now >= nextMonitor
+        let uiDue = now >= nextUI
+        if monitorDue { nextMonitor = now + 2 }
+        if uiDue { nextUI = now + 1 }
+        return (resumed ? 0 : gap, monitorDue, uiDue, resumed)
+    }
+    static func smoothingAlpha(elapsed: Float, timeConstant: Float) -> Float {
+        1 - exp(-elapsed / timeConstant)
+    }
+}
+
+struct ThermalDwell {
+    private var startedAt: TimeInterval?
+    private(set) var elapsed: Float = 0
+    mutating func update(active: Bool, now: TimeInterval) {
+        guard active else { reset(); return }
+        let start = startedAt ?? now
+        startedAt = start
+        elapsed = Float(max(0, now - start))
+    }
+    mutating func reset() { startedAt = nil; elapsed = 0 }
 }

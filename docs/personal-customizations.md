@@ -107,3 +107,33 @@ The menu uses an explicit compact height (560 points for profiles, 500 for manua
 The menu hides the native scroller and draws a 2-point, 18%-opacity position indicator without intercepting scrolling. The Touch Bar tray entry keeps AppKit’s native bordered bezel and draws its icon and reading together inside the system-controlled slot (14-point icon, 12-point digits, 3-point gap). Normal readings use white; manual and safety colors remain distinct. On this Mac, the global expanded Control Strip mode hid the third-party entry; App Controls with Control Strip shows it. This global preference is user-controlled and is never changed by the installer.
 
 The expanded Touch Bar mode control retains its selection. Summer selects Summer Smooth, Manual selects manual control, and Default reflects confirmed Apple automatic control. Menu changes synchronize immediately; profiles outside those three leave all segments unselected. Failed Default resets retain the last confirmed selection.
+
+## Lower-overhead polling
+
+Thermal polling defaults to 500ms, UI notifications to 1s, temperature anomaly
+history to 2s and process diagnostics to 10s. EMA, RPM ramps, sustained activation
+and the Summer cooling delay use monotonic elapsed time rather than a fixed
+100ms tick count. Sleep/wake invalidates hardware caches and timing windows;
+a long scheduling gap cannot produce a large catch-up ramp.
+
+Each SMC connection enumerates its own key inventory. Only a complete inventory
+can exclude missing keys. Successful key metadata, fan count and hardware RPM
+limits are cached; transient metadata/read failures are retried. No list of this
+Mac's sensors is hard-coded. Wake invalidation is serialized with hardware reads.
+Touch Bar symbols are recreated only when their visual state changes; unchanged
+profile/state/readings avoid redundant UI notifications.
+
+On the MacBookPro17,1 used for validation, the same nine temperature keys and
+1199–7199 RPM limits remain available. Thirty-second samples (six effective
+5-second intervals, first top sample discarded) measured GUI mean CPU 2.35% in
+Default, 2.50% with Summer selected before sustained fan activation, and 2.70%
+in stable Manual at about 1199 RPM. The installed daemon measured 0.12% in Manual.
+A first Manual sample during the transition averaged 5.43%, reaching 10.4%; steady
+state is not a guarantee against transient spikes. Earlier Default GUI sampling
+was 7.87%; these are observational samples, not controlled benchmark results.
+
+The running privileged daemon was not replaced in this GUI-only deployment. Its
+existing 1-second thermal safety floor, heartbeat and write/unlock behavior remain
+in force. The source includes cache invalidation on daemon wake for a future full
+installation. Repeated all-fan unlock waits are a separate daemon latency issue,
+not required to achieve the measured GUI CPU reduction, and remain unchanged.

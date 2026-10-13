@@ -190,26 +190,31 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
     }
 
     public func update(_ value: TouchBarReading) {
+        let styleChanged = reading.manual != value.manual || reading.safetyOverride != value.safetyOverride || entryButton.image == nil
         if reading.manual != value.manual { sliderNeedsSync = true }
         reading = value
         guard enabled else { return }
         let title = value.temperatureText(value.cpuTemperature)
         if title != lastEntryTitle { entryButton.title = title; lastEntryTitle = title }
         let tint: NSColor = value.safetyOverride ? .systemRed : value.manual ? .systemOrange : .white
+        if styleChanged {
         entryButton.image = NSImage(systemSymbolName: value.safetyOverride ? "exclamationmark.triangle.fill" : "fan.fill",
                                     accessibilityDescription: "ThermalForge")?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
                 .applying(.init(paletteColors: [tint])))
         entryButton.image?.isTemplate = false
         entryButton.contentTintColor = tint
+        }
         guard expanded else { return }
         updatePanel()
     }
 
     private func updatePanel() {
-        metrics?.stringValue = "CPU \(reading.temperatureText(reading.cpuTemperature))  GPU \(reading.temperatureText(reading.gpuTemperature))  |  \(reading.actualRPM.map { "\($0) RPM" } ?? "RPM —")  |  \(reading.powerText)"
-        modes?.isEnabled = reading.controlAvailable
-        modes?.selectedSegment = reading.manual ? TouchBarMode.manual.rawValue : reading.mode?.rawValue ?? -1
+        let text = "CPU \(reading.temperatureText(reading.cpuTemperature))  GPU \(reading.temperatureText(reading.gpuTemperature))  |  \(reading.actualRPM.map { "\($0) RPM" } ?? "RPM —")  |  \(reading.powerText)"
+        if metrics?.stringValue != text { metrics?.stringValue = text }
+        if modes?.isEnabled != reading.controlAvailable { modes?.isEnabled = reading.controlAvailable }
+        let segment = reading.manual ? TouchBarMode.manual.rawValue : reading.mode?.rawValue ?? -1
+        if modes?.selectedSegment != segment { modes?.selectedSegment = segment }
         if sliderNeedsSync {
             slider?.slider.minValue = reading.minRPM
             slider?.slider.maxValue = max(reading.maxRPM, reading.minRPM + 1)

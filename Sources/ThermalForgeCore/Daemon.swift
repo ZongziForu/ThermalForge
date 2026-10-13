@@ -865,6 +865,9 @@ public final class DaemonServer {
     }
 
     private func handleWake() {
+        smcLock.lock()
+        fanControl.invalidateHardwareCache()
+        smcLock.unlock()
         stateLock.lock()
         let heldCommand = hold.command
         stateLock.unlock()

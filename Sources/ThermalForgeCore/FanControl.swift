@@ -41,11 +41,11 @@ public struct FanInfo {
     public let mode: String
 }
 
-public struct ThermalStatus: Encodable {
+public struct ThermalStatus: Encodable, Equatable {
     public let fans: [FanStatus]
     public let temperatures: [String: Float]
 
-    public struct FanStatus: Encodable {
+    public struct FanStatus: Encodable, Equatable {
         public let index: Int
         public let actualRPM: Int
         public let targetRPM: Int
@@ -84,6 +84,14 @@ public final class FanControl {
     private let modeKeyTemplate: String
     /// Whether Ftst unlock is available (M1-M4) or not (M5+)
     private let hasFtst: Bool
+    private var cachedFanCount: Int?
+    private var cachedLimits: [Int: (min: Float, max: Float)] = [:]
+
+    public func invalidateHardwareCache() {
+        smc.invalidateCache()
+        cachedFanCount = nil
+        cachedLimits.removeAll()
+    }
     /// Where operational messages go. nil means TFLogger (a daily file for the app
     /// and the CLI as the user; the unified log when running as root). The daemon
     /// sets this so its lines carry the daemon's own prefix.
@@ -115,11 +123,14 @@ public final class FanControl {
     // MARK: - Fan Count
 
     public func fanCount() throws -> Int {
+        if let cachedFanCount { return cachedFanCount }
         let result = smc.readKey(SMCFanKey.count)
         guard result.success, !result.bytes.isEmpty else {
             throw ThermalForgeError.readFailed(SMCFanKey.count)
         }
-        return Int(result.bytes[0])
+        let count = Int(result.bytes[0])
+        cachedFanCount = count
+        return count
     }
 
     // MARK: - Read Fan Info
@@ -127,8 +138,12 @@ public final class FanControl {
     public func fanInfo(_ index: Int) throws -> FanInfo {
         let actual = readFanFloat(index, template: SMCFanKey.actual)
         let target = readFanFloat(index, template: SMCFanKey.target)
-        let minimum = readFanFloat(index, template: SMCFanKey.minimum)
-        let maximum = readFanFloat(index, template: SMCFanKey.maximum)
+        let limits = cachedLimits[index] ?? (
+            min: readFanFloat(index, template: SMCFanKey.minimum),
+            max: readFanFloat(index, template: SMCFanKey.maximum))
+        if limits.min > 0, limits.max > limits.min { cachedLimits[index] = limits }
+        let minimum = limits.min
+        let maximum = limits.max
 
         let modeKey = SMCFanKey.key(modeKeyTemplate, fan: index)
         let modeResult = smc.readKey(modeKey)
