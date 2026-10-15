@@ -104,6 +104,49 @@ struct TouchBarTests {
         #expect(actions.count == 1)
     }
 
+    @Test("Rounded slider retains native item, release-only actions and hardware bounds") @MainActor
+    func roundedSlider() {
+        let backend = FakeTouchBarBackend()
+        var actions: [TouchBarAction] = []
+        let controller = TouchBarController(namespace: "test.rounded", backend: backend) { actions.append($0) }
+        controller.setEnabled(true)
+        controller.update(TouchBarReading(manual: true, targetRPM: 3600,
+                                          minRPM: 1200, maxRPM: 7200, controlAvailable: true))
+        controller.openPanel()
+        let item = controller.touchBar(NSTouchBar(), makeItemForIdentifier: .init("test.rounded.touchbar.slider")) as? NSSliderTouchBarItem
+        #expect(item?.slider is RoundedTouchBarSlider)
+        #expect(item?.slider.isContinuous == false)
+        #expect(item?.slider.minValue == 1200)
+        #expect(item?.slider.maxValue == 7200)
+        #expect(item?.doubleValue == 3600)
+        if let item { controller.setSpeed(item) }
+        #expect(actions == [.speed(3600)])
+        controller.update(TouchBarReading(manual: false, controlAvailable: true))
+        #expect(item?.slider.isEnabled == false)
+        if let item { controller.setSpeed(item) }
+        #expect(actions.count == 1)
+    }
+
+    @Test("Pressed material changes never send actions and disabling restores the solid thumb") @MainActor
+    func pressedSliderMaterial() {
+        let slider = RoundedTouchBarSlider(value: 4200, minValue: 1200, maxValue: 7200,
+                                           target: nil, action: nil)
+        slider.isContinuous = false
+        #expect(!slider.thumbPressed)
+        slider.setThumbPressed(true)
+        #expect(slider.thumbPressed)
+        if #available(macOS 26.0, *) { #expect(slider.displaysGlassThumb) }
+        #expect(slider.doubleValue == 4200)
+        slider.setThumbPressed(false)
+        #expect(!slider.displaysGlassThumb)
+        slider.setThumbPressed(true)
+        slider.isEnabled = false
+        #expect(!slider.thumbPressed)
+        slider.setThumbPressed(true)
+        #expect(!slider.displaysGlassThumb)
+        #expect(slider.doubleValue == 4200)
+    }
+
     @Test("Closing the panel keeps its entry registered and permits reopening") @MainActor
     func closeAndReopen() {
         let backend = FakeTouchBarBackend()

@@ -277,7 +277,12 @@ public enum TouchBarAction: Equatable { case summer, manual, automatic, speed(Do
         }
         if identifier == sliderID {
             let item = NSSliderTouchBarItem(identifier: identifier)
+            item.slider = RoundedTouchBarSlider(value: 2000, minValue: 1200, maxValue: 7200,
+                                                target: nil, action: nil)
             item.slider.isContinuous = false
+            item.view.wantsLayer = true
+            item.view.layer?.cornerRadius = 7
+            item.view.layer?.masksToBounds = true
             item.target = self; item.action = #selector(setSpeed(_:))
             slider = item; updatePanel(); return item
         }

@@ -34,6 +34,9 @@ import ThermalForgeTouchBar
         button.frame = NSRect(x: 20, y: 30, width: 230, height: 36)
         window.contentView?.addSubview(label)
         window.contentView?.addSubview(button)
+        let midpoint = NSButton(title: "Preview Manual at 50%", target: self, action: #selector(previewMidpoint))
+        midpoint.frame = NSRect(x: 270, y: 30, width: 230, height: 36)
+        window.contentView?.addSubview(midpoint)
         self.window = window
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -44,6 +47,11 @@ import ThermalForgeTouchBar
         DispatchQueue.main.asyncAfter(deadline: .now() + 900) { NSApp.terminate(nil) }
     }
     @objc func openPreview() { controller?.openPanel() }
+    @objc func previewMidpoint() {
+        manual = true; mode = .manual; targetRPM = 4200
+        update()
+        controller?.openPanel()
+    }
     func update() {
         tick += 1
         controller?.update(TouchBarReading(cpuTemperature: Float(55 + tick % 5), gpuTemperature: 49,

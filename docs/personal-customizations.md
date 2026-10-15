@@ -172,3 +172,22 @@ The stopped app's supervised hold was released by the daemon watchdog before
 the benchmark, so no CLI/user hold was overwritten. Latency gains include the
 new daemon's SMC caches as well as avoiding redundant mode writes; they are not
 an isolated benchmark of unlock logic alone.
+
+## Touch Bar capsule and pressed glass (2026-10-15)
+
+The native `NSSliderTouchBarItem` now uses a custom `NSSliderCell` with a
+horizontal capsule thumb and a modestly rounded rectangular background. Native
+tracking, accessibility, release-only actions and existing RPM/safety guards
+remain in place. The knob's invalidation rectangle includes all its pixels,
+and the custom track clears the old thumb area to avoid trailing edges.
+
+On macOS 26+, pressing swaps the solid thumb for a clear `NSGlassEffectView`;
+release, disabling or detaching the view restores the solid thumb. The overlay
+passes touches through to the native slider. It has no custom morphing animation
+or polling timer; older macOS versions retain the solid capsule. Glass appearance
+depends on the sparse Touch Bar background, so this does not promise the same
+refraction as a desktop window.
+
+The isolated simulated preview was physically checked by the user: material
+switching and dragging both work. 180 tests and a release build passed. This is
+a GUI-only update to 0.2.3.2; daemon, CLI and fan-control timing are unchanged.
